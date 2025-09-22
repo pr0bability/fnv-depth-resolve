@@ -1,0 +1,358 @@
+#include "Bethesda/BSMemory.hpp"
+#include "Bethesda/BSRenderedTexture.hpp"
+#include "Bethesda/BSRenderState.hpp"
+#include "Bethesda/BSShaderAccumulator.hpp"
+#include "Bethesda/BSShaderManager.hpp"
+#include "Bethesda/ImageSpaceEffectDepthOfField.hpp"
+#include "Bethesda/ImageSpaceManager.hpp"
+#include "Bethesda/ImageSpaceTexture.hpp"
+#include "Bethesda/TESMain.hpp"
+#include "Gamebryo/NiDX9Renderer.hpp"
+#include "Misc/BSD3DTexture.hpp"
+
+#include "nvse/PluginAPI.h"
+#include "nvapi/nvapi.h"
+
+#include <vector>
+#include <algorithm>
+
+BS_ALLOCATORS
+
+IDebugLog gLog("logs\\DepthResolve.log");
+
+// Constants.
+static NVSEMessagingInterface*	pMsgInterface = nullptr;
+static uint32_t					uiPluginHandle = 0;
+static constexpr uint32_t		uiShaderLoaderVersion = 131;
+
+// Statics.
+static bool bRESZ;
+static bool bNVAPI;
+
+class BSShaderManagerEx {
+public:
+	static NiTexturePtr spINTZDepthTexture;
+
+	static NiTexture* GetINTZDepthTexture(uint32_t auiWidth, uint32_t auiHeight) {
+		if (!spINTZDepthTexture) {
+			IDirect3DDevice9* pDevice = NiDX9Renderer::GetSingleton()->GetD3DDevice();
+			IDirect3DTexture9* pD3DTexture = nullptr;
+			pDevice->CreateTexture(auiWidth, auiHeight, 1, D3DUSAGE_DEPTHSTENCIL, (D3DFORMAT)MAKEFOURCC('I', 'N', 'T', 'Z'), D3DPOOL_DEFAULT, &pD3DTexture, nullptr);
+
+			spINTZDepthTexture = BSD3DTexture::CreateObject(pD3DTexture);
+
+			_MESSAGE("INTZ texture created (%d, %d)", auiWidth, auiHeight);
+		}
+
+		return spINTZDepthTexture;
+	}
+};
+
+class ImageSpaceManagerEx {
+public:
+	static NiTexture* GetDepthTexture() {
+		if (bRESZ)
+			return BSShaderManagerEx::GetINTZDepthTexture(0, 0);
+		return ImageSpaceManager::GetSingleton()->kDepthTexture.GetTexture();
+	}
+};
+
+class BSShaderAccumulatorEx {
+public:
+	static void ResolveDepth(BSShaderAccumulator* apAccumulator, BSRenderedTexture* apCurrentRenderTarget) {
+		if (bNVAPI) {
+			IDirect3DDevice9* pDevice = NiDX9Renderer::GetSingleton()->GetD3DDevice();
+			NiRenderTargetGroup* pRTGroup = apCurrentRenderTarget->GetRenderTargetGroup();
+			IDirect3DSurface9* pRTDepth = pRTGroup->GetDepthStencilBuffer()->GetDX9RendererData()->m_pkD3DSurface;
+			IDirect3DBaseTexture9* pDepthBuffer = ImageSpaceTexture::GetDepthBuffer()->GetTexture(0)->GetDX9RendererData()->m_pkD3DTexture;
+			if (NvAPI_D3D9_StretchRectEx(pDevice, pRTDepth, NULL, pDepthBuffer, NULL, D3DTEXF_NONE) == NVAPI_UNREGISTERED_RESOURCE) {
+				NvAPI_D3D9_RegisterResource(pRTDepth);
+				NvAPI_D3D9_RegisterResource(pDepthBuffer);
+				NvAPI_D3D9_StretchRectEx(pDevice, pRTDepth, NULL, pDepthBuffer, NULL, D3DTEXF_NONE);
+			}
+		}
+		else if (bRESZ) {
+			IDirect3DDevice9* pDevice = NiDX9Renderer::GetSingleton()->GetD3DDevice();
+
+			pDevice->SetTexture(0, BSShaderManagerEx::GetINTZDepthTexture(0, 0)->GetDX9RendererData()->GetD3DTexture());
+
+			BSRenderState::SetZEnable(D3DZB_FALSE, BSRSL_NONE);
+			BSRenderState::SetZWriteEnable(false, BSRSL_NONE);
+			BSRenderState::SetColorWriteEnable(0, BSRSL_NONE);
+
+			DWORD originalPointSize;
+			pDevice->GetRenderState(D3DRS_POINTSIZE, &originalPointSize);
+
+			D3DXVECTOR3 vDummyPoint(0.0f, 0.0f, 0.0f);
+			pDevice->SetFVF(D3DFVF_XYZ);
+			pDevice->DrawPrimitiveUP(D3DPT_POINTLIST, 1, vDummyPoint, sizeof(D3DXVECTOR3));
+
+			BSRenderState::RestoreColorWriteEnable(BSRSL_NONE);
+			BSRenderState::RestoreZWriteEnable(BSRSL_NONE);
+			BSRenderState::RestoreZEnable(BSRSL_NONE);
+
+			pDevice->SetRenderState(D3DRS_POINTSIZE, 0x7FA05000);
+			pDevice->SetRenderState(D3DRS_POINTSIZE, originalPointSize);
+		}
+	}
+
+	static void FinishAccumulating_Standard_PostResolveDepth(BSShaderAccumulator* apAccumulator) {
+		BSRenderedTexture* pISTexture = BSShaderManager::GetCurrentRenderTarget();
+
+		if (apAccumulator->bSetupWaterRefractionDepth && pISTexture) {
+			ResolveDepth(apAccumulator, pISTexture);
+		}
+
+		apAccumulator->RenderAlphaGeometry(static_cast<BSBatchRenderer::AlphaGroupType>(!apAccumulator->bIsUnderwater));
+
+		NiDX9Renderer* pRenderer = NiDX9Renderer::GetSingleton();
+		if (apAccumulator->bSetupWaterRefractionDepth && apAccumulator->GetWaterPassesWithinRange(BSShaderManager::BSSM_WATER_STENCIL, BSShaderManager::BSSM_WATER_SPECULAR_LIGHTING_Vc)) {
+			if (pISTexture) [[likely]] {
+				BSRenderedTexture::StopOffscreen();
+				if (!BSShaderManager::pWaterRefractionTexture) [[unlikely]]
+					BSShaderManager::pWaterRefractionTexture = BSShaderManager::GetTextureManager()->BorrowRenderedTexture(pRenderer, BSTextureManager::BSTM_RT_MAIN_FIRSTPERSON);
+
+				ImageSpaceManager::GetSingleton()->RenderEffect(ImageSpaceManager::IS_SHADER_COPY, pRenderer, pISTexture, BSShaderManager::pWaterRefractionTexture, 0, 1);
+				BSRenderedTexture::StartOffscreen(NiRenderer::CLEAR_NONE, pISTexture->GetRenderTargetGroup());
+			}
+			pRenderer->SetCameraData(apAccumulator->m_pkCamera);
+		}
+
+		apAccumulator->RenderBatches(BSShaderManager::BSSM_WATER_STENCIL, BSShaderManager::BSSM_WATER_STENCIL_Vc);
+		apAccumulator->RenderBatches(BSShaderManager::BSSM_WATER_WADING, BSShaderManager::BSSM_WATER_WADING_SPECULAR_LIGHTING_Vc);
+		apAccumulator->RenderBatches(BSShaderManager::BSSM_WATER, BSShaderManager::BSSM_WATER_SPECULAR_LIGHTING_Vc);
+
+		if (apAccumulator->bSetupWaterRefractionDepth) {
+			BSShaderManager::GetTextureManager()->ReturnRenderedTexture(BSShaderManager::pWaterRefractionTexture);
+			BSShaderManager::pWaterRefractionTexture = nullptr;
+		}
+		apAccumulator->RenderGeometryGroup(BSBatchRenderer::GROUP_UNK_9, true);
+		apAccumulator->RenderAlphaGeometry(static_cast<BSBatchRenderer::AlphaGroupType>(apAccumulator->bIsUnderwater));
+
+		BSRenderState::SetAlphaBlendEnable(false, BSRSL_NONE);
+		BSRenderState::SetAlphaBlendEnable(false, BSRSL_NONE);
+
+		apAccumulator->RenderBatches(BSShaderManager::BSSM_PRECIPITATION_RAIN, BSShaderManager::BSSM_SELFILLUMALPHA_S);
+
+		apAccumulator->RenderGeometryGroup(BSBatchRenderer::GROUP_UNK_1, false);
+	}
+};
+
+class TESMainEx {
+public:
+	void RenderDepthOfField(BSShaderAccumulator* apAccumulator, BSRenderedTexture* apRenderedTexture) {
+		// Depth is set up already, clear the render targets though to make the ISE render correctly.
+		BSRenderedTexture::StopOffscreen();
+		return;
+	}
+};
+
+class ImageSpaceEffectDepthOfFieldEx : public ImageSpaceEffectDepthOfField {
+public:
+	bool UpdateParamsEx(int a2) {
+		bool bResult = ThisCall<bool>(0xBD66C0, this, a2);
+
+		NiDX9Renderer* pRenderer = NiDX9Renderer::GetSingleton();
+		IDirect3DDevice9* pDevice = pRenderer->GetD3DDevice();
+		SceneGraph* pSceneGraph = TESMain::GetWorldSceneGraph();
+		NiCamera* pSceneGraphCamera = pSceneGraph->GetCamera();
+
+		ImageSpaceShaderParam* pParameters = kShaderParams.GetAt(2);
+
+		float fNear = pSceneGraphCamera->m_kViewFrustum.m_fNear;
+		float fFmN = pSceneGraphCamera->m_kViewFrustum.m_fFar - pSceneGraphCamera->m_kViewFrustum.m_fNear;
+		float fNtF = pSceneGraphCamera->m_kViewFrustum.m_fNear * pSceneGraphCamera->m_kViewFrustum.m_fFar;
+
+		pParameters->SetPixelConstants(2, -100000000.0, fNear, fFmN, fNtF);
+
+		return bResult;
+	}
+};
+
+bool CheckDXVK() {
+	HMODULE d3d9Module = GetModuleHandleA("d3d9.dll");
+	if (!d3d9Module) return false;
+
+	char modulePath[MAX_PATH];
+	if (!GetModuleFileNameA(d3d9Module, modulePath, MAX_PATH)) {
+		return false;
+	}
+
+	DWORD versionSize = GetFileVersionInfoSizeA(modulePath, nullptr);
+	if (versionSize == 0) return false;
+
+	std::vector<BYTE> versionData(versionSize);
+	if (!GetFileVersionInfoA(modulePath, 0, versionSize, versionData.data())) {
+		return false;
+	}
+
+	struct LANGANDCODEPAGE {
+		WORD wLanguage;
+		WORD wCodePage;
+	} *lpTranslate;
+
+	UINT cbTranslate;
+	if (VerQueryValueA(versionData.data(), "\\VarFileInfo\\Translation",
+		(LPVOID*)&lpTranslate, &cbTranslate)) {
+
+		char subBlock[256];
+		sprintf_s(subBlock, "\\StringFileInfo\\%04x%04x\\ProductName", lpTranslate[0].wLanguage, lpTranslate[0].wCodePage);
+
+		char* fileDesc;
+		UINT fileDescLen;
+		if (VerQueryValueA(versionData.data(), subBlock, (LPVOID*)&fileDesc, &fileDescLen)) {
+			if (!memcmp(fileDesc, "DXVK", 4)) {
+				return true;
+			}
+		}
+	}
+
+	return false;
+}
+
+bool INTZTextureResetCallback(bool abBeforeReset, void* pvData) {
+	if (abBeforeReset) {
+		BSShaderManagerEx::spINTZDepthTexture = nullptr;
+	}
+	else {
+		NiDX9Renderer* pRenderer = NiDX9Renderer::GetSingleton();
+
+		uint32_t uiWidth, uiHeight;
+		if (BSShaderManager::bLetterBox) {
+			uiWidth = BSShaderManager::iLetterboxWidth;
+			uiHeight = BSShaderManager::iLetterboxHeight;
+		}
+		else {
+			uiWidth = pRenderer->GetScreenWidth();
+			uiHeight = pRenderer->GetScreenHeight();
+		}
+		BSShaderManagerEx::GetINTZDepthTexture(uiWidth, uiHeight);
+	}
+
+	return true;
+}
+
+NiTexturePtr BSShaderManagerEx::spINTZDepthTexture = nullptr;
+
+void InitHooks() {
+	WriteRelJumpEx(0x875E40, &TESMainEx::RenderDepthOfField);
+	WriteRelJump(0xB54090, &ImageSpaceManagerEx::GetDepthTexture);
+
+	// BSShaderAccumulator::FinishAccumulating_Standard_PreResolveDepth
+	// Skip alpha blend rendering.
+	SafeWriteBuf(0xB65C43, "\x90\x90\x90\x90\x90\x90\x90", 7);
+	SafeWriteBuf(0xB65C4C, "\x90\x90\x90\x90\x90\x90\x90", 7);
+	ReplaceCall(0xB6657D, &BSShaderAccumulatorEx::FinishAccumulating_Standard_PostResolveDepth);
+	ReplaceCall(0xB665AC, &BSShaderAccumulatorEx::FinishAccumulating_Standard_PostResolveDepth);
+
+	// TESMain::DrawWorldStandard
+	// Skip the not working motion blur while aiming rendering.
+	SafeWrite8(0x870EB3, 0xEB);  // JMP 
+	SafeWrite8(0x870EB4, 0x33);  // to 0x870EE8
+
+	ReplaceVirtualFuncEx(0x10BC42C, &ImageSpaceEffectDepthOfFieldEx::UpdateParamsEx);
+}
+
+void MessageHandler(NVSEMessagingInterface::Message* msg) {
+	switch (msg->type) {
+	case NVSEMessagingInterface::kMessage_DeferredInit:
+	{
+		bool bDXVK = CheckDXVK();
+
+		_MESSAGE("DXVK status: %u", bDXVK);
+
+		NiDX9Renderer* pRenderer = NiDX9Renderer::GetSingleton();
+		IDirect3D9* pD3D9 = pRenderer->GetD3D9();
+		D3DDISPLAYMODE kDisplayMode;
+		pD3D9->GetAdapterDisplayMode(D3DADAPTER_DEFAULT, &kDisplayMode);
+		bRESZ = pD3D9->CheckDeviceFormat(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, kDisplayMode.Format, D3DUSAGE_RENDERTARGET, D3DRTYPE_SURFACE, (D3DFORMAT)MAKEFOURCC('R', 'E', 'S', 'Z')) == D3D_OK;
+
+		_MESSAGE("RESZ status: %u", bRESZ);
+
+		if (!bRESZ && bDXVK) {
+			MessageBox(NULL, "Incompatible DXVK version.\nYour version of DXVK is incompatible with Depth Resolve. Use version <= 2.6.1, or >= 2.7.1.", "Depth Resolve", MB_OK | MB_ICONERROR);
+			ExitProcess(0);
+		}
+
+		bNVAPI = !bRESZ && NvAPI_Initialize() == NVAPI_OK;
+
+		_MESSAGE("NVAPI status: %u", bNVAPI);
+
+		if (bRESZ) {
+			uint32_t uiWidth, uiHeight;
+			if (BSShaderManager::bLetterBox) {
+				uiWidth = BSShaderManager::iLetterboxWidth;
+				uiHeight = BSShaderManager::iLetterboxHeight;
+			}
+			else {
+				uiWidth = pRenderer->GetScreenWidth();
+				uiHeight = pRenderer->GetScreenHeight();
+			}
+			BSShaderManagerEx::GetINTZDepthTexture(uiWidth, uiHeight);
+
+			pRenderer->AddResetNotificationFunc(INTZTextureResetCallback, nullptr);
+		}
+		else if (!bRESZ && !bNVAPI) {
+			MessageBox(NULL, "Depth Resolve not compatible with your device, because it does not support RESZ nor Nvidia API.", "Depth Resolve", MB_OK | MB_ICONERROR);
+			ExitProcess(0);
+		}
+	}
+		break;
+	}
+}
+
+EXTERN_DLL_EXPORT bool NVSEPlugin_Query(const NVSEInterface* nvse, PluginInfo* info) {
+	info->infoVersion = PluginInfo::kInfoVersion;
+	info->name = "Depth Resolve";
+	info->version = 100;
+
+	return !nvse->isEditor;
+}
+
+EXTERN_DLL_EXPORT bool NVSEPlugin_Load(NVSEInterface* nvse) {
+	HMODULE hShaderLoader = GetModuleHandle("Fallout Shader Loader.dll");
+	HMODULE hLODFlickerFix = GetModuleHandle("LODFlickerFix.dll");
+	HMODULE hDOFFix = GetModuleHandle("DoF-Fix.dll");
+
+	if (!hShaderLoader) {
+		MessageBox(NULL, "Fallout Shader Loader not found.\nDepth Resolve cannot be used without it, please install it.", "Depth Resolve", MB_OK | MB_ICONERROR);
+		ExitProcess(0);
+	}
+
+	if (!hLODFlickerFix) {
+		MessageBox(NULL, "LOD Flicker Fix not found.\nDepth Resolve cannot be used without it, please install it.", "Depth Resolve", MB_OK | MB_ICONERROR);
+		ExitProcess(0);
+	}
+
+	if (!hDOFFix) {
+		MessageBox(NULL, "Depth of Field Fix not found.\nDepth Resolve cannot be used without it, please install it.", "Depth Resolve", MB_OK | MB_ICONERROR);
+		ExitProcess(0);
+	}
+
+	pMsgInterface = (NVSEMessagingInterface*)nvse->QueryInterface(kInterface_Messaging);
+	uiPluginHandle = nvse->GetPluginHandle();
+	pMsgInterface->RegisterListener(uiPluginHandle, "NVSE", MessageHandler);
+
+	auto pQuery = (_NVSEPlugin_Query)GetProcAddress(hShaderLoader, "NVSEPlugin_Query");
+	PluginInfo kInfo = {};
+	pQuery(nvse, &kInfo);
+	if (kInfo.version < uiShaderLoaderVersion) {
+		char cBuffer[192];
+		sprintf_s(cBuffer, "Fallout Shader Loader is outdated.\nPlease update it to use Depth Resolve!\nCurrent version: %i\nMinimum required version: %i", kInfo.version, uiShaderLoaderVersion);
+		MessageBox(NULL, cBuffer, "Depth Resolve", MB_OK | MB_ICONERROR);
+		ExitProcess(0);
+	}
+
+	InitHooks();
+
+	return true;
+}
+
+BOOL WINAPI DllMain(
+	HANDLE  hDllHandle,
+	DWORD   dwReason,
+	LPVOID  lpreserved
+)
+{
+	return TRUE;
+}

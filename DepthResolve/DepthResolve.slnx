@@ -1,0 +1,8 @@
+<Solution>
+  <Configurations>
+    <BuildType Name="Debug" />
+    <BuildType Name="Release" />
+    <Platform Name="Win32" />
+  </Configurations>
+  <Project Path="DepthResolve.vcxproj" Id="2BA5C749-F888-470B-8217-5078F720D5D8" />
+</Solution>
