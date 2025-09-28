@@ -80,11 +80,10 @@ public:
 			BSRenderState::SetZWriteEnable(false, BSRSL_NONE);
 			BSRenderState::SetColorWriteEnable(0, BSRSL_NONE);
 
-			DWORD originalPointSize;
-			pDevice->GetRenderState(D3DRS_POINTSIZE, &originalPointSize);
+			DWORD uiOrigPointSize;
+			pDevice->GetRenderState(D3DRS_POINTSIZE, &uiOrigPointSize);
 
 			D3DXVECTOR3 vDummyPoint(0.0f, 0.0f, 0.0f);
-			pDevice->SetFVF(D3DFVF_XYZ);
 			pDevice->DrawPrimitiveUP(D3DPT_POINTLIST, 1, vDummyPoint, sizeof(D3DXVECTOR3));
 
 			BSRenderState::RestoreColorWriteEnable(BSRSL_NONE);
@@ -92,7 +91,7 @@ public:
 			BSRenderState::RestoreZEnable(BSRSL_NONE);
 
 			pDevice->SetRenderState(D3DRS_POINTSIZE, 0x7FA05000);
-			pDevice->SetRenderState(D3DRS_POINTSIZE, originalPointSize);
+			pDevice->SetRenderState(D3DRS_POINTSIZE, uiOrigPointSize);
 		}
 	}
 
