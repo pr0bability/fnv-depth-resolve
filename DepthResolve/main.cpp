@@ -303,7 +303,7 @@ void MessageHandler(NVSEMessagingInterface::Message* msg) {
 EXTERN_DLL_EXPORT bool NVSEPlugin_Query(const NVSEInterface* nvse, PluginInfo* info) {
 	info->infoVersion = PluginInfo::kInfoVersion;
 	info->name = "Depth Resolve";
-	info->version = 100;
+	info->version = 101;
 
 	return !nvse->isEditor;
 }
