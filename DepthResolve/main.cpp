@@ -324,8 +324,7 @@ EXTERN_DLL_EXPORT bool NVSEPlugin_Load(NVSEInterface* nvse) {
 	}
 
 	if (!hDOFFix) {
-		MessageBox(NULL, "Depth of Field Fix not found.\nDepth Resolve cannot be used without it, please install it.", "Depth Resolve", MB_OK | MB_ICONERROR);
-		ExitProcess(0);
+		_MESSAGE("Depth of Field Fix not found");
 	}
 
 	pMsgInterface = (NVSEMessagingInterface*)nvse->QueryInterface(kInterface_Messaging);
