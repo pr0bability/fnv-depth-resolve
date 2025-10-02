@@ -51,9 +51,7 @@ public:
 class ImageSpaceManagerEx {
 public:
 	static NiTexture* GetDepthTexture() {
-		if (bRESZ)
-			return BSShaderManagerEx::GetINTZDepthTexture(0, 0);
-		return ImageSpaceManager::GetSingleton()->kDepthTexture.GetTexture();
+		return BSShaderManagerEx::GetINTZDepthTexture(0, 0);
 	}
 };
 
@@ -64,7 +62,7 @@ public:
 			IDirect3DDevice9* pDevice = NiDX9Renderer::GetSingleton()->GetD3DDevice();
 			NiRenderTargetGroup* pRTGroup = apCurrentRenderTarget->GetRenderTargetGroup();
 			IDirect3DSurface9* pRTDepth = pRTGroup->GetDepthStencilBuffer()->GetDX9RendererData()->m_pkD3DSurface;
-			IDirect3DBaseTexture9* pDepthBuffer = ImageSpaceTexture::GetDepthBuffer()->GetTexture(0)->GetDX9RendererData()->m_pkD3DTexture;
+			IDirect3DBaseTexture9* pDepthBuffer = BSShaderManagerEx::GetINTZDepthTexture(0, 0)->GetDX9RendererData()->GetD3DTexture();
 			if (NvAPI_D3D9_StretchRectEx(pDevice, pRTDepth, NULL, pDepthBuffer, NULL, D3DTEXF_NONE) == NVAPI_UNREGISTERED_RESOURCE) {
 				NvAPI_D3D9_RegisterResource(pRTDepth);
 				NvAPI_D3D9_RegisterResource(pDepthBuffer);
@@ -277,24 +275,23 @@ void MessageHandler(NVSEMessagingInterface::Message* msg) {
 
 		_MESSAGE("NVAPI status: %u", bNVAPI);
 
-		if (bRESZ) {
-			uint32_t uiWidth, uiHeight;
-			if (BSShaderManager::bLetterBox) {
-				uiWidth = BSShaderManager::iLetterboxWidth;
-				uiHeight = BSShaderManager::iLetterboxHeight;
-			}
-			else {
-				uiWidth = pRenderer->GetScreenWidth();
-				uiHeight = pRenderer->GetScreenHeight();
-			}
-			BSShaderManagerEx::GetINTZDepthTexture(uiWidth, uiHeight);
-
-			pRenderer->AddResetNotificationFunc(INTZTextureResetCallback, nullptr);
-		}
-		else if (!bRESZ && !bNVAPI) {
+		if (!bRESZ && !bNVAPI) {
 			MessageBox(NULL, "Depth Resolve not compatible with your device, because it does not support RESZ nor Nvidia API.", "Depth Resolve", MB_OK | MB_ICONERROR);
 			ExitProcess(0);
 		}
+
+		uint32_t uiWidth, uiHeight;
+		if (BSShaderManager::bLetterBox) {
+			uiWidth = BSShaderManager::iLetterboxWidth;
+			uiHeight = BSShaderManager::iLetterboxHeight;
+		}
+		else {
+			uiWidth = pRenderer->GetScreenWidth();
+			uiHeight = pRenderer->GetScreenHeight();
+		}
+		BSShaderManagerEx::GetINTZDepthTexture(uiWidth, uiHeight);
+
+		pRenderer->AddResetNotificationFunc(INTZTextureResetCallback, nullptr);
 	}
 		break;
 	}
