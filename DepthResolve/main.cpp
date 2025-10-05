@@ -96,6 +96,7 @@ public:
 	static void FinishAccumulating_Standard_PostResolveDepth(BSShaderAccumulator* apAccumulator) {
 		BSRenderedTexture* pISTexture = BSShaderManager::GetCurrentRenderTarget();
 
+		// Pre-water depth.
 		if (apAccumulator->bSetupWaterRefractionDepth && pISTexture) {
 			ResolveDepth(apAccumulator, pISTexture);
 		}
@@ -118,6 +119,11 @@ public:
 		apAccumulator->RenderBatches(BSShaderManager::BSSM_WATER_STENCIL, BSShaderManager::BSSM_WATER_STENCIL_Vc);
 		apAccumulator->RenderBatches(BSShaderManager::BSSM_WATER_WADING, BSShaderManager::BSSM_WATER_WADING_SPECULAR_LIGHTING_Vc);
 		apAccumulator->RenderBatches(BSShaderManager::BSSM_WATER, BSShaderManager::BSSM_WATER_SPECULAR_LIGHTING_Vc);
+
+		// Post-water depth.
+		if (apAccumulator->bSetupWaterRefractionDepth && pISTexture) {
+			ResolveDepth(apAccumulator, pISTexture);
+		}
 
 		if (apAccumulator->bSetupWaterRefractionDepth) {
 			BSShaderManager::GetTextureManager()->ReturnRenderedTexture(BSShaderManager::pWaterRefractionTexture);
