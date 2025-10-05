@@ -18,3 +18,20 @@ NiTexture* ImageSpaceTexture::GetTexture() const {
 	else
 		return static_cast<NiTexture*>(spTexture.m_pObject);
 }
+
+// GAME - 0xBA39A0
+// GECK - 0x938200
+void ImageSpaceTexture::ReturnRenderedTexture() {
+#if GAME
+	ThisCall(0xBA39A0, this);
+#else
+	ThisCall(0x938200, this);
+#endif
+}
+
+void ImageSpaceTexture::ClearTexture() {
+	spTexture = nullptr;
+	bIsRenderedTexture = false;
+	iFilterMode = TEXTURE_FILTER_MODE_NEAREST;
+	iClampMode = TEXTURE_ADDRESS_MODE_CLAMP_S_CLAMP_T;
+}

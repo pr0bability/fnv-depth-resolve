@@ -621,6 +621,9 @@
     <ClInclude Include="..\external\nvapi\nvapi.h">
       <Filter>external\nvapi</Filter>
     </ClInclude>
+    <ClInclude Include="internal\Game\Bethesda\BSGraphics.hpp">
+      <Filter>internal\Game\Bethesda</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />

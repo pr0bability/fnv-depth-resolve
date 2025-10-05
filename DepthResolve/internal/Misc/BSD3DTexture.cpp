@@ -35,7 +35,6 @@ BSD3DTexture* BSD3DTexture::CreateObject(IDirect3DTexture9* apD3DTexture) {
 	pTexture->AddTextureToList();
 
 	pTexture->m_pkRendererData = BSD3DTextureData::CreateObject(pTexture, apD3DTexture);
-	pTexture->m_pkRendererData->IncRefCount();
 
 	return pTexture;
 }

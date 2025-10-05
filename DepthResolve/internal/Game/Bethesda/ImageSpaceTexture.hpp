@@ -1,6 +1,7 @@
 #pragma once
 
 #include "BSRenderedTexture.hpp"
+#include "BSGraphics.hpp"
 
 class ImageSpaceTexture {
 public:
@@ -16,7 +17,9 @@ public:
 
 	static BSRenderedTexture* GetDepthBuffer();
 
-	NiTexture* GetTexture() const;
+	NiTexture*	GetTexture() const;
+	void		ReturnRenderedTexture();
+	void		ClearTexture();
 };
 
 ASSERT_SIZE(ImageSpaceTexture, 0x10);

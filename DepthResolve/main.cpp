@@ -164,6 +164,13 @@ public:
 
 		return bResult;
 	}
+
+	void ReturnTexturesEx() {
+		if (kTextures.GetAt(4))
+			kTextures.GetAt(4)->ClearTexture();
+
+		ThisCall(0xBD6A30, this);
+	}
 };
 
 bool CheckDXVK() {
@@ -209,10 +216,16 @@ bool CheckDXVK() {
 
 bool INTZTextureResetCallback(bool abBeforeReset, void* pvData) {
 	if (abBeforeReset) {
+		_MESSAGE("Releasing INTZ texture before reset");
+
 		BSShaderManagerEx::spINTZDepthTexture = nullptr;
 	}
 	else {
 		NiDX9Renderer* pRenderer = NiDX9Renderer::GetSingleton();
+		if (!pRenderer || !pRenderer->GetD3DDevice()) {
+			_MESSAGE("Device not available during reset callback");
+			return false;
+		}
 
 		uint32_t uiWidth, uiHeight;
 		if (BSShaderManager::bLetterBox) {
@@ -248,6 +261,7 @@ void InitHooks() {
 	SafeWrite8(0x870EB4, 0x33);  // to 0x870EE8
 
 	ReplaceVirtualFuncEx(0x10BC42C, &ImageSpaceEffectDepthOfFieldEx::UpdateParamsEx);
+	ReplaceVirtualFuncEx(0x10BC424, &ImageSpaceEffectDepthOfFieldEx::ReturnTexturesEx);
 }
 
 void MessageHandler(NVSEMessagingInterface::Message* msg) {
