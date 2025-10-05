@@ -402,5 +402,4 @@ nvse/.idea/
 nvse/enc_temp_folder/
 
 # Package
-package/NVSE
-package/*.7z
+package
