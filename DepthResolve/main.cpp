@@ -3,6 +3,7 @@
 #include "Bethesda/BSRenderState.hpp"
 #include "Bethesda/BSShaderAccumulator.hpp"
 #include "Bethesda/BSShaderManager.hpp"
+#include "Bethesda/ImageSpaceEffect.hpp"
 #include "Bethesda/ImageSpaceEffectDepthOfField.hpp"
 #include "Bethesda/ImageSpaceManager.hpp"
 #include "Bethesda/ImageSpaceTexture.hpp"
@@ -28,6 +29,8 @@ static constexpr uint32_t		uiShaderLoaderVersion = 131;
 // Statics.
 static bool bRESZ;
 static bool bNVAPI;
+
+static std::vector<ImageSpaceEffect*> kPostDepthEffects;
 
 class BSShaderManagerEx {
 public:
@@ -94,16 +97,30 @@ public:
 	}
 
 	static void FinishAccumulating_Standard_PostResolveDepth(BSShaderAccumulator* apAccumulator) {
+		NiDX9Renderer* pRenderer = NiDX9Renderer::GetSingleton();
+
 		BSRenderedTexture* pISTexture = BSShaderManager::GetCurrentRenderTarget();
 
 		// Pre-water depth.
 		if (apAccumulator->bSetupWaterRefractionDepth && pISTexture) {
 			ResolveDepth(apAccumulator, pISTexture);
+
+			if (!kPostDepthEffects.empty()) {
+				BSRenderedTexture::StopOffscreen();
+				for (const auto& pEffect : kPostDepthEffects) {
+					if (!pEffect)
+						continue;
+					if (!pEffect->IsActive())
+						continue;
+					ImageSpaceManager::GetSingleton()->RenderEffect(pEffect, pRenderer, pISTexture, pISTexture, 0, 1);
+				}
+				BSRenderedTexture::StartOffscreen(NiRenderer::CLEAR_NONE, pISTexture->GetRenderTargetGroup());
+				pRenderer->SetCameraData(apAccumulator->m_pkCamera);
+			}
 		}
 
 		apAccumulator->RenderAlphaGeometry(static_cast<BSBatchRenderer::AlphaGroupType>(!apAccumulator->bIsUnderwater));
 
-		NiDX9Renderer* pRenderer = NiDX9Renderer::GetSingleton();
 		if (apAccumulator->bSetupWaterRefractionDepth && apAccumulator->GetWaterPassesWithinRange(BSShaderManager::BSSM_WATER_STENCIL, BSShaderManager::BSSM_WATER_SPECULAR_LIGHTING_Vc)) {
 			if (pISTexture) [[likely]] {
 				BSRenderedTexture::StopOffscreen();
@@ -317,10 +334,24 @@ void MessageHandler(NVSEMessagingInterface::Message* msg) {
 	}
 }
 
+EXTERN_DLL_EXPORT void __cdecl PrependPostDepthEffect(ImageSpaceEffect* apEffect) {
+	if (std::find(kPostDepthEffects.begin(), kPostDepthEffects.end(), apEffect) != kPostDepthEffects.end())
+		return;
+
+	kPostDepthEffects.insert(kPostDepthEffects.begin(), apEffect);
+}
+
+EXTERN_DLL_EXPORT void __cdecl AppendPostDepthEffect(ImageSpaceEffect* apEffect) {
+	if (std::find(kPostDepthEffects.begin(), kPostDepthEffects.end(), apEffect) != kPostDepthEffects.end())
+		return;
+
+	kPostDepthEffects.push_back(apEffect);
+}
+
 EXTERN_DLL_EXPORT bool NVSEPlugin_Query(const NVSEInterface* nvse, PluginInfo* info) {
 	info->infoVersion = PluginInfo::kInfoVersion;
 	info->name = "Depth Resolve";
-	info->version = 110;
+	info->version = 120;
 
 	return !nvse->isEditor;
 }
