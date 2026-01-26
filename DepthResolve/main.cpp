@@ -45,6 +45,11 @@ public:
 			spINTZDepthTexture = BSD3DTexture::CreateObject(pD3DTexture);
 
 			_MESSAGE("INTZ texture created (%d, %d)", auiWidth, auiHeight);
+
+			if (bNVAPI) {
+				_MESSAGE("Registering INTZ to NVAPI %p", pD3DTexture);
+				NvAPI_D3D9_RegisterResource(pD3DTexture);
+			}
 		}
 
 		return spINTZDepthTexture;
@@ -59,12 +64,20 @@ public:
 };
 
 class BSShaderAccumulatorEx {
+private:
+	static IDirect3DSurface9* pLastRTDepth;
 public:
 	static void ResolveDepth(BSShaderAccumulator* apAccumulator, BSRenderedTexture* apCurrentRenderTarget) {
 		if (bNVAPI) {
 			IDirect3DDevice9* pDevice = NiDX9Renderer::GetSingleton()->GetD3DDevice();
 			NiRenderTargetGroup* pRTGroup = apCurrentRenderTarget->GetRenderTargetGroup();
 			IDirect3DSurface9* pRTDepth = pRTGroup->GetDepthStencilBuffer()->GetDX9RendererData()->m_pkD3DSurface;
+
+			if (pLastRTDepth && pRTDepth != pLastRTDepth) {
+				NvAPI_D3D9_UnregisterResource(pLastRTDepth);
+			}
+			pLastRTDepth = pRTDepth;
+
 			IDirect3DBaseTexture9* pDepthBuffer = BSShaderManagerEx::GetINTZDepthTexture(0, 0)->GetDX9RendererData()->GetD3DTexture();
 			if (NvAPI_D3D9_StretchRectEx(pDevice, pRTDepth, NULL, pDepthBuffer, NULL, D3DTEXF_NONE) == NVAPI_UNREGISTERED_RESOURCE) {
 				NvAPI_D3D9_RegisterResource(pRTDepth);
@@ -158,6 +171,8 @@ public:
 	}
 };
 
+IDirect3DSurface9* BSShaderAccumulatorEx::pLastRTDepth = nullptr;
+
 class TESMainEx {
 public:
 	void RenderDepthOfField(BSShaderAccumulator* apAccumulator, BSRenderedTexture* apRenderedTexture) {
@@ -240,6 +255,12 @@ bool CheckDXVK() {
 bool INTZTextureResetCallback(bool abBeforeReset, void* pvData) {
 	if (abBeforeReset) {
 		_MESSAGE("Releasing INTZ texture before reset");
+
+		if (bNVAPI && BSShaderManagerEx::spINTZDepthTexture) {
+			IDirect3DBaseTexture9* pD3DTexture = BSShaderManagerEx::spINTZDepthTexture->GetDX9RendererData()->GetD3DTexture();
+			_MESSAGE("Unregistering INTZ from NVAPI %p", pD3DTexture);
+			NvAPI_D3D9_UnregisterResource(pD3DTexture);
+		}
 
 		BSShaderManagerEx::spINTZDepthTexture = nullptr;
 	}
