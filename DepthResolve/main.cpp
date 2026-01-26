@@ -196,6 +196,26 @@ public:
 	}
 };
 
+class Hook  {
+public:
+	void AddSurface(Ni2DBuffer::RendererData* apRendererData) {
+		Ni2DBuffer* pThis = reinterpret_cast<Ni2DBuffer*>(this);
+		pThis->m_spRendererData = apRendererData;
+		auto pSurface = reinterpret_cast<Ni2DBuffer::NiDX9TextureBufferData*>(apRendererData)->m_pkD3DSurface;
+		if (bNVAPI && pSurface)
+			NvAPI_D3D9_RegisterResource(pSurface);
+	}
+
+	void RemoveSurface(Ni2DBuffer::NiDX9TextureBufferData*& apRendererData) {
+		if (bNVAPI && apRendererData) {
+			auto pSurface = apRendererData->m_pkD3DSurface;
+			if (pSurface)
+				NvAPI_D3D9_UnregisterResource(pSurface);
+		}
+		ThisCall(0xE7DB70, this, &apRendererData);
+	}
+};
+
 bool CheckDXVK() {
 	HMODULE d3d9Module = GetModuleHandleA("d3d9.dll");
 	if (!d3d9Module) return false;
@@ -285,6 +305,10 @@ void InitHooks() {
 
 	ReplaceVirtualFuncEx(0x10BC42C, &ImageSpaceEffectDepthOfFieldEx::UpdateParamsEx);
 	ReplaceVirtualFuncEx(0x10BC424, &ImageSpaceEffectDepthOfFieldEx::ReturnTexturesEx);
+
+
+	ReplaceCallEx(0xE7DB3F, &Hook::AddSurface);
+	ReplaceCallEx(0xE7DBE3, &Hook::RemoveSurface);
 }
 
 void MessageHandler(NVSEMessagingInterface::Message* msg) {
