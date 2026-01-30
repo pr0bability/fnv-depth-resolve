@@ -372,7 +372,7 @@ EXTERN_DLL_EXPORT void __cdecl AppendPostDepthEffect(ImageSpaceEffect* apEffect)
 EXTERN_DLL_EXPORT bool NVSEPlugin_Query(const NVSEInterface* nvse, PluginInfo* info) {
 	info->infoVersion = PluginInfo::kInfoVersion;
 	info->name = "Depth Resolve";
-	info->version = 120;
+	info->version = 130;
 
 	return !nvse->isEditor;
 }
